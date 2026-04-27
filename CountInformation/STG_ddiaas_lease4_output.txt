@@ -1,0 +1,125 @@
+======================================
+  DDIaaS Lease4 Count Report
+  2026-04-15 17:15:48 EDT
+======================================
+
+==> Cluster: ddi-stg-use1
+    Endpoint-manager pod: ddiaas-endpoint-manager-d646f6589-m76q4
+    DHCP endpoints found: 69
+    Querying lease4 counts (parallel=5)...
+    Total lease4 on ddi-stg-use1: 18382 (across 69 endpoints)
+
+==> Mapping account IDs via IPAM DB on teleport.services.sdp.infoblox.com-us-stg-1...
+    Unique ophids to map: 67
+    Mapped 48 ophids to numeric account_id
+
+======================================
+  SUMMARY
+======================================
+
+Total endpoints queried: 69
+Total lease4 entries:    18382
+Account mapping:         via IPAM on teleport.services.sdp.infoblox.com-us-stg-1
+
+--------------------------------------
+  1. Lease4 Count by Account
+--------------------------------------
+account_id identity_account_id                        leases   endpts
+---------- ---------------------------------------  -------- --------
+2012461    56351011-cac2-4416-90c6-588dfc61e26f            0        5
+2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5        18382       39
+2009531    86d841b0-181a-4006-b0f1-0bc0267adf5a            0        2
+2012120    8ae1ea2c-533d-4d7a-9cf3-e2b994e4afc4            0        1
+N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689            0       21
+2011099    beabeee7-5dbb-4278-b690-0b837513a1cf            0        1
+
+--------------------------------------
+  2. Lease4 Count by Cluster + Account
+--------------------------------------
+cluster              account_id identity_account_id                        leases   endpts
+-------------------- ---------- ---------------------------------------  -------- --------
+ddi-stg-use1         2012461    56351011-cac2-4416-90c6-588dfc61e26f            0        5
+ddi-stg-use1         2012120    8ae1ea2c-533d-4d7a-9cf3-e2b994e4afc4            0        1
+ddi-stg-use1         2011099    beabeee7-5dbb-4278-b690-0b837513a1cf            0        1
+ddi-stg-use1         2009531    86d841b0-181a-4006-b0f1-0bc0267adf5a            0        2
+ddi-stg-use1         2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5        18382       39
+ddi-stg-use1         N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689            0       21
+
+--------------------------------------
+  3. Lease4 Count per Endpoint
+--------------------------------------
+cluster              endpoint_id                          account_id identity_account_id                       size   leases
+-------------------- ------------------------------------ ---------- ---------------------------------------  ----- --------
+ddi-stg-use1         566wprrzlqnior4rqpn3tobmh6w5viqp     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         77u33hmgcfci5mgwcxuqsvt73imcafaj     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         54qzh3slw7mkwdygj7taebs6gr2zupje     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         53cbu7qxkvfcqzc2pnlkg7h5td7cynqf     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         6mi6hzh5vgbjxwifwrh346vqnjerjzre     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         6htekxpixjgvndvfh4ipuixmcm372nbm     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         6hntydujbmsc2rmdl475ajfupbwnno4x     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         5v22mcdexxc6b5q5unwasuhhkqbzi2gj     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         5txqazunt2eaa5xyg3actxlpcf3bszd4     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         5i7s36vftsd3pbsa6inb4k3b2npqujkc     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         4xv5chcptuaa2z5tisbjd5prfk27ql3z     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         4nyzlptjc3b6vpgka6wc3g5kcme5zasw     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         4bpymtx5m26gfzxr3w5ypnqgkfyl73zw     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         3o5fkuhu3voufx55xvkohoauiag3hpzf     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         2m3zg6dzumi434gty4vmbh5oe3y2xphu     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         ztqvzwtfquczayk3r2fv4ywcnk372usy     2012461    56351011-cac2-4416-90c6-588dfc61e26f         S        0
+ddi-stg-use1         zbemjtxf4s3dmmlvluqceecbdxwiot5p     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         z4rvjfy5mcbgrfqypa2c4tvhrskdjisv     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         z2hfhfvtgcicpcg7arqhozwtmscpc2li     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         yzzdwfw4ygtuzqwhajldicsdaqkp7mca     2011099    beabeee7-5dbb-4278-b690-0b837513a1cf        XL        0
+ddi-stg-use1         xhu5ozyc7ult2iwvi2v6uvlceheqtyne     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         x3ofsnp5tu56pjcdhns3gwhrgpbievia     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         wkplxbaxipgpvg4x5piqn7r4g6jv3v34     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         wiahx4cso3qpbs2d43trve4jc2gystju     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         wg7m5ajgi4l7l3mhkcervq4uh2aoxhoz     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         vek4p332mb3hvxmjl2qej5p63mh2ukcl     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         v7escyryhgrzabustvcxkz5nskt7plcw     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         v2lvamzsdt4q2rzgktzrnaa4ypcpurtq     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         t72kewfvgxo4ndq6zj323nvd3qmcy55s     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         t63chol7iag5gme3dcfnza3zcubvrc4p     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689        XL        0
+ddi-stg-use1         soixgrtfrju7nnvcvijlbouwamv5uqjy     2009531    86d841b0-181a-4006-b0f1-0bc0267adf5a         S        0
+ddi-stg-use1         rkbp5hgj3wfluclujottzxlcryoqjtrz     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         rib2ytstt6wrjbhm4nusunwupmsg6bkl     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         psevsunasemrkmr2i5q7jlmzeg3p7v4a     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S     3609
+ddi-stg-use1         osntyycict5bcgyqybwiojreljgciyfy     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         od35txgukcpkoqy24c75q57idtmxsc5l     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         nz4k7tz33tagzq6t4rssrwruhkgohk4j     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5        XL        0
+ddi-stg-use1         nkr43jeqdv2igixhxhgakqlub25s35w5     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         neinmdpg3eadmmmz25fxskcage7g6dcd     2009531    86d841b0-181a-4006-b0f1-0bc0267adf5a         S        0
+ddi-stg-use1         moax6enllaqv3nddwbextlqxwizkojcw     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         mmfqhe3xmzri6dxmbqhic4cmorfnn5yd     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         mah73prpekszgj7y2naapci3a7cb427r     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         lkvbyzlzkaruyr6424zuizfiaxljubsy     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         lddl3lepehqbgpl6yljrpw54zy5lnez4     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         kw3aiyekv77zh4dsui54uep45fhlqb35     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5       Lab        0
+ddi-stg-use1         knvpkua7k2y32gj7e73i5vi646jlrlzm     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S    14773
+ddi-stg-use1         jysmjlw5lnb7cbboe35porrxcirhusg5     2012461    56351011-cac2-4416-90c6-588dfc61e26f         S        0
+ddi-stg-use1         jlbydmzihxokkzwft3zdwuyaddm2qes7     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         jl6y6dl57dtxmftddylumonb5jzjtkrn     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         it4ahcaxyulxqijm4ohzospkv3ta3qkz     2012120    8ae1ea2c-533d-4d7a-9cf3-e2b994e4afc4         S        0
+ddi-stg-use1         ihjjoh6rmh7znqmtfhvn55gqxudk45lr     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         i3vbqooyuezjp3kuyq3jypcg5qzuyu3b     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         hzljp6mkbmprmnt6og62vljsb2pczley     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         hkamk45h6abymd7kty264h4kzndpfrye     2012461    56351011-cac2-4416-90c6-588dfc61e26f         S        0
+ddi-stg-use1         hbfzdgl4iihzdmnzi5gbr3tztcyjvpzo     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         h2s22stjkjjy2xljw3vw5esnio2r6mba     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         gbbwzwzibnwi42uf6pkeb4rw7rlonpjf     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         fr3hiqoehay4vqvreieqzscg7ftea2wp     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         fov4dj7mnn6z33h5i2z5ouwqra2rmcic     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         fm7row7kyfi55jjwx4x5yro4phjn3pc7     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689       Lab        0
+ddi-stg-use1         f2glwbxd2ylzqxrweiunh3ddvbyxzl5b     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         emqjxvy5r23xz33hhshzlziy4kye3rus     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         dykiydr6p5gdscsu7lj5cyn2to4kpnac     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         cxli3uoqpxygatotbynkrkvozuhmsatw     2012461    56351011-cac2-4416-90c6-588dfc61e26f         S        0
+ddi-stg-use1         cvpd7ypyhdnd5nk6dow645u3s7mbmbct     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         bzkp66fldqetvdohijjhfoamaoj3axqt     2012461    56351011-cac2-4416-90c6-588dfc61e26f         S        0
+ddi-stg-use1         byvy22yshcbrzvi2465ayaufp4sgduoe     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+ddi-stg-use1         bmx4bzmsc5dsaichfnbuicmxbrzi6oiw     2009104    1129fc6e-4358-4840-a8af-3c9bed80d1d5         S        0
+ddi-stg-use1         b5yjsy6wyxpydgm5karwj6sf3r77hyib     N/A        c33126e0-c3e8-4379-b1a7-c84ef6ddc689         S        0
+
+======================================
+  Report complete
+======================================

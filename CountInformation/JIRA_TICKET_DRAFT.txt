@@ -1,0 +1,130 @@
+======================================================================
+JIRA TICKET DRAFT — Copy into your Jira project
+======================================================================
+
+Type:        Task
+Summary:     Run DDIaaS lease4 count report for NA and EU production accounts
+Priority:    Medium
+Labels:      ddiaas, dhcp, lease-count, operations
+
+----------------------------------------------------------------------
+DESCRIPTION
+----------------------------------------------------------------------
+
+h2. Objective
+
+Run the DDIaaS lease4 count scripts on *production* to get DHCP lease counts
+for NA (52 accounts) and EU (20 accounts) customer accounts. This data is
+needed to understand DDIaaS lease utilization across regions.
+
+h2. Background
+
+Two scripts are available for counting DDIaaS leases:
+
+* *lease4_count.sh* — queries the cloud dhcp-leases DB (host_leases table).
+  Supports {{--accounts-file}} to filter by account IDs from NA.txt / EU.txt.
+  Supports {{--xaas}} mode for DDIaaS-only lease counts. This mode also queries
+  the DDIaaS endpoint-manager DB to map endpoints to accounts.
+
+Both scripts are located in:
+{{Automation/CountInformation/}}
+
+h2. Prerequisites
+
+*Teleport access is required.* The current user (mjhablox) is blocked from
+running these scripts on production due to missing Teleport permissions.
+
+Request the following Teleport role additions before executing:
+
+{code}
+# For lease4_count.sh (cloud control-plane)
+kubernetes_resources:
+  - kind: pods
+    name: '*'
+    namespace: ddi
+    verbs: ['create', 'get', 'list', 'delete', 'exec']
+    api_group: '*'
+
+# For --xaas mode (DDIaaS endpoint-manager query)
+kubernetes_resources:
+  - kind: pods
+    name: '*'
+    namespace: ddiaas-endpoint-manager
+    verbs: ['get', 'list', 'exec']
+    api_group: '*'
+{code}
+
+Clusters needing access:
+||Region||Cloud Cluster||DDIaaS Cluster (for --xaas mode)||
+|NA|us-com-1|ddi-prd-nva1|
+|EU|eu-com-1 (TBD)|ddi-prd-frk1|
+
+h2. Execution Steps
+
+h3. Step 1: Teleport Login
+
+{code:bash}
+# Cloud control-plane clusters
+tsh kube login us-com-1
+# tsh kube login eu-com-1  (confirm EU cloud cluster name)
+
+# DDIaaS clusters (needed for --xaas mode endpoint-manager query)
+tsh kube login ddi-prd-nva1
+tsh kube login ddi-prd-frk1
+{code}
+
+h3. Step 2: Run lease4_count.sh for NA
+
+{code:bash}
+cd Automation/CountInformation
+
+# Standard report (all BloxOne leases from cloud dhcp-leases DB, filtered to 52 NA accounts)
+bash lease4_count.sh --accounts-file NA.txt --limit 30 \
+  --context teleport.services.sdp.infoblox.com-us-com-1 \
+  2>&1 | tee NA_lease4_output.txt
+
+# XaaS-only report (DDIaaS leases only, uses endpoint-manager for mapping)
+bash lease4_count.sh --xaas --accounts-file NA.txt --limit 30 \
+  --context teleport.services.sdp.infoblox.com-us-com-1 \
+  --ddiaas-context teleport.services.sdp.infoblox.com-ddi-prd-nva1 \
+  2>&1 | tee NA_xaas_lease4_output.txt
+{code}
+
+h3. Step 3: Run lease4_count.sh for EU
+
+{code:bash}
+# Standard report (filtered to 20 EU accounts)
+bash lease4_count.sh --accounts-file EU.txt --limit 30 \
+  --context <eu-cloud-context> \
+  2>&1 | tee EU_lease4_output.txt
+
+# XaaS-only report
+bash lease4_count.sh --xaas --accounts-file EU.txt --limit 30 \
+  --context <eu-cloud-context> \
+  --ddiaas-context teleport.services.sdp.infoblox.com-ddi-prd-frk1 \
+  2>&1 | tee EU_xaas_lease4_output.txt
+{code}
+
+h2. Expected Output Files
+
+||File||Description||
+|NA_lease4_output.txt|NA BloxOne lease counts from cloud dhcp-leases DB (52 accounts)|
+|NA_xaas_lease4_output.txt|NA DDIaaS-only lease counts (via endpoint-manager mapping)|
+|EU_lease4_output.txt|EU BloxOne lease counts from cloud dhcp-leases DB (20 accounts)|
+|EU_xaas_lease4_output.txt|EU DDIaaS-only lease counts (via endpoint-manager mapping)|
+
+h2. Acceptance Criteria
+
+* [ ] Teleport permissions granted for production cloud + DDIaaS clusters
+* [ ] All 4 output files generated successfully
+* [ ] NA and EU lease counts collected and reviewed
+* [ ] Output files committed to Automation/CountInformation/
+
+h2. Notes
+
+* Scripts were tested on staging (ddi-stg-use1 / us-stg-1) and work correctly.
+* Staging results: 69 DHCP endpoints, 18,382 lease4 entries across 6 accounts.
+* NA.txt contains 52 production account IDs, EU.txt contains 20.
+* EU cloud context name needs to be confirmed (possibly eu-com-1 or similar).
+* The ddiaas_lease4_count.sh script does NOT need NA.txt/EU.txt — it discovers
+  all accounts from the endpoint-manager DB automatically.

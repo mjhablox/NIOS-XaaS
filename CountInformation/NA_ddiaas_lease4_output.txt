@@ -1,0 +1,7 @@
+======================================
+  DDIaaS Lease4 Count Report
+  2026-04-15 17:09:07 EDT
+======================================
+
+==> Cluster: teleport.services.sdp.infoblox.com-ddi-prd-nva1
+    Endpoint-manager pod: ddiaas-endpoint-manager-9796f5b57-xkzrf

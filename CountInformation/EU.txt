@@ -1,0 +1,115 @@
+Row Labels
+Count of capability
+Divided by 2
+3000006
+ 
+ 
+Infoblox SA EU
+4
+2
+3000102
+ 
+ 
+Atlas OnPrem
+2
+1
+3000136
+ 
+ 
+Infoblox-EU-Pegasus-v4-MGMT-SRV-RPRT
+4
+2
+3000137
+ 
+ 
+Infoblox-EU-Pegasus-v4-MGMT-SRV-RPRT-B1TD-CLOUD
+14
+7
+3000207
+ 
+ 
+DEPARTMENT FOR ENVIRONMENT FOOD & RURAL AFFAIRS (DEFRA)
+2
+1
+3000462
+ 
+ 
+bstafford-sandbox
+2
+1
+3000500
+ 
+ 
+CONTINUATION COMPUTERS LIMITED
+6
+3
+3000559
+ 
+ 
+D'IETEREN
+2
+1
+3000578
+ 
+ 
+AVIVA PLC
+2
+1
+3000629
+ 
+ 
+CARLSBERG
+6
+3
+3000636
+ 
+ 
+philray-sandbox
+2
+1
+3000645
+ 
+ 
+CRIF S.p.A.
+2
+1
+3000675
+ 
+ 
+MIELE & CIE. KG
+2
+1
+3000701
+ 
+ 
+The Magnum Ice Cream Company
+4
+2
+3000706
+ 
+ 
+ACCENTURE, LLP
+8
+4
+3000719
+ 
+ 
+COOLBLUE B.V.
+2
+1
+3000733
+ 
+ 
+Halo PM Demo
+2
+1
+3000734
+ 
+ 
+Halo PM test
+2
+1
+Grand Total
+68
+34
+

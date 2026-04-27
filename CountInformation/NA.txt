@@ -1,0 +1,307 @@
+Row Labels
+Count of capability
+Divided by 2
+113
+ 
+ 
+SCHNEIDER NATIONAL INC TRUCKING
+2
+1
+1149
+ 
+ 
+Infoblox Professional Services
+2
+1
+1522
+ 
+ 
+EXPERNET
+4
+2
+1612
+ 
+ 
+Infoblox TME
+4
+2
+1648
+ 
+ 
+CYBERWORLD ASIA LTD
+2
+1
+2000252
+ 
+ 
+Infoblox NSTAR Advanced
+2
+1
+2000460
+ 
+ 
+SECURE NETWORKS PVT. LTD
+2
+1
+2000511
+ 
+ 
+Infoblox SE APJ
+2
+1
+2000512
+ 
+ 
+Infoblox SE EMEA
+2
+1
+2000513
+ 
+ 
+Infoblox SE Sandbox
+2
+1
+2000514
+ 
+ 
+Infoblox SE AMS
+4
+2
+2001550
+ 
+ 
+American Airlines
+2
+1
+2001742
+ 
+ 
+WESTMINSTER CITY COUNCIL
+2
+1
+2003449
+ 
+ 
+Atlas OnPrem
+12
+6
+2003743
+ 
+ 
+TEXAS RANGERS
+4
+2
+2003783
+ 
+ 
+4N IT-Solutions GmbH
+2
+1
+2004181
+ 
+ 
+Infoblox Sales
+2
+1
+2004732
+ 
+ 
+Coca-Cola Europacific Partners PLC
+2
+1
+2006083
+ 
+ 
+FWD GROUP MANAGEMENT HOLDINGS LIMITED
+4
+2
+2008162
+ 
+ 
+Infoblox-Pegasus-v4-MGMT-SRV-RPRT-B1TD-ADV
+8
+4
+2008929
+ 
+ 
+LATAM SE
+2
+1
+2009067
+ 
+ 
+Linsey Gooding
+2
+1
+2009161
+ 
+ 
+Shukran-Naqati-Sandbox
+4
+2
+2009175
+ 
+ 
+test-sameer
+4
+2
+2009413
+ 
+ 
+Igor-Test
+4
+2
+2009448
+ 
+ 
+Netskope-1
+4
+2
+2009516
+ 
+ 
+VSE Corporation
+4
+2
+2009844
+ 
+ 
+Automation_Demo
+6
+3
+2009939
+ 
+ 
+Sandbox DDI to Cloud POC
+2
+1
+2010733
+ 
+ 
+Integrated Solution QA 2
+4
+2
+2010734
+ 
+ 
+Integrated Solution QA 3
+2
+1
+2010808
+ 
+ 
+AEG  ANSCHUTZ ENTERTAINMENT GROUP, INC.
+2
+1
+2012136
+ 
+ 
+Coupang Inc
+4
+2
+2017333
+ 
+ 
+COLGATE-PALMOLIVE COMPANY
+4
+2
+2019008
+ 
+ 
+MANHATTAN ASSOCIATES, INC.
+2
+1
+2019142
+ 
+ 
+Golub Capital Company 9 LLC
+4
+2
+2020414
+ 
+ 
+XAAS-Google-Cloud-WAN
+4
+2
+2020750
+ 
+ 
+EKC Advanced Electronics USA, LLC
+10
+5
+2021799
+ 
+ 
+Infoblox Education|Infoblox Education FP3Q582
+2
+1
+2022243
+ 
+ 
+Infoblox Education|Infoblox Education CF9H362
+2
+1
+2022947
+ 
+ 
+Telia-POC
+6
+3
+2024316
+ 
+ 
+Infoblox Education|Infoblox Education 64XM5H9
+2
+1
+224
+ 
+ 
+INFOBLOX IT
+18
+9
+32
+ 
+ 
+BEST BUY COMPANY
+6
+3
+339
+ 
+ 
+LAS VEGAS CLARK COUNTY LIBRARY DISTRICT
+2
+1
+346
+ 
+ 
+EIDP, Inc
+2
+1
+553
+ 
+ 
+TERILOGY CO.,LTD.
+4
+2
+67
+ 
+ 
+Orange Cyberdefense Netherlands BV
+2
+1
+797
+ 
+ 
+Infoblox SS-Ops
+2
+1
+883
+ 
+ 
+EXCLUSIVE NETWORKS DEUTSCHLAND GMBH
+2
+1
+Grand Total
+184
+92
+

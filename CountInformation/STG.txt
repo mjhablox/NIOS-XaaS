@@ -1,0 +1,95 @@
+# Staging environment account IDs (us-stg-1)
+# Top 30 accounts by used BloxOne lease count
+# Format: account_name, lease_count, account_id (script extracts numeric-only lines >= 32)
+#
+# Account                         Used Leases
+# -------                         -----------
+STG Account 2009104 (DDIaaS)
+2009104
+
+STG Account 2004643
+2004643
+
+STG Account 2011099
+2011099
+
+STG Account 2008925
+2008925
+
+STG Account 2008923
+2008923
+
+STG Account 2008924
+2008924
+
+STG Account 2005149
+2005149
+
+STG Account 2006460
+2006460
+
+STG Account 2008764
+2008764
+
+STG Account 2008939
+2008939
+
+STG Account 2008032
+2008032
+
+STG Account 2006341
+2006341
+
+STG Account 2008894
+2008894
+
+STG Account 2008578
+2008578
+
+STG Account 2004605
+2004605
+
+STG Account 2001048
+2001048
+
+STG Account 2009984
+2009984
+
+STG Account 2008384
+2008384
+
+STG Account 2009531
+2009531
+
+STG Account 2010811
+2010811
+
+STG Account 2011948
+2011948
+
+STG Account 2009306
+2009306
+
+STG Account 2012129
+2012129
+
+STG Account 2008911
+2008911
+
+STG Account 2011040
+2011040
+
+STG Account 2012434
+2012434
+
+STG Account 2006374
+2006374
+
+STG Account 5256
+5256
+
+STG Account 2012432
+2012432
+
+STG Account 2012435
+2012435
