@@ -1,12 +1,13 @@
-#!/bin/bash
+#!/opt/homebrew/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-for in in tgbldq4oq22unr3fgm6nmauqdi446zol
+for ep in 2a73txojt5y5mcbp5usni3rdywe74wsg
 do
-    echo "Starting rollback for $in"
-    ./01_scale_down.sh $in
-    ./02_rollback.sh $in reset
-#    ./02_rollback.sh $in restore
-    ./03_verify_db.sh   $in
+    echo "Starting rollback for $ep"
+    "$SCRIPT_DIR/01_scale_down.sh" $ep
+    "$SCRIPT_DIR/02_fix_db.sh" $ep reset
+#    "$SCRIPT_DIR/02_fix_db.sh" $ep restore
+    "$SCRIPT_DIR/can_scale_up.sh" $ep ddiaas-endpoint-manager v0.1.0-13-g2c6382a-j159-main
 
-done 
+done
 

@@ -6,7 +6,7 @@ CloudNativePG (CNPG) Postgres backend on AWS EKS.
 **Audience:** On-call engineers, SREs, and developers debugging customer endpoint
 issues on `stage` / `prod`.
 
-**Last updated:** 2026-04-28
+**Last updated:** 2026-05-01
 
 ---
 
@@ -128,21 +128,236 @@ or via CSP UI: delete IPsec tunnel → range → subnet → IP space → endpoin
 
 ---
 
-### 2.3 Rollback Kea 2.6 → 2.2
+### 2.3 Rollback Kea 2.6 → 2.2 (DB-reset approach)
 
-1. Snapshot CNPG DB **before** rollback:
-   ```bash
-   kubectl cnpg backup "$CLUSTER" -n "$NS" --backup-name pre-rollback-$(date +%s)
-   ```
-2. Remove the account from the FFO (revert §2.2 step 1).
-3. The schema rollback path lives in
-   `ddi.dhcp.host.db` migration `down` scripts. Use the rollback procedure
-   documented in `ddiaas.dhcp.resolver.endpoint/feature/rollback-to-kea-2.2-using-db-backup`.
-4. Verify with `./debug_endpoint.sh "$ENDPOINT_ID"`.
+> **When to use:** The rolling update from 2.6 → 2.2 stalled — one zone got the
+> new chart but the DB is still at schema v22. Kea 2.2 cannot start against a
+> v22 schema, so pods are `CrashLoopBackOff` or stuck in health-check failures.
+> Lease data will be re-synced from cloud after startup; this approach does
+> **not** preserve local lease state.
+
+**Pre-flight**
+
+| Check | Command |
+|---|---|
+| Identify which zones have Kea 2.2 vs 2.6 | `kubectl get pods -n $NS -l ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID -o wide` |
+| Confirm CNPG cluster healthy (3/3) | `kubectl get cluster.postgresql.cnpg.io -n $NS $CLUSTER` |
+| Note current DB schema version | See step 2 below |
+| Know the target Kea 2.2 chart version | e.g. `v0.1.0-13-g2c6382a-j159-main` |
+
+**Orchestration scripts:**
+```
+Automation/NIOS-XaaS/Rollback/
+├── start_rollback.sh        # orchestrator — calls 01 → 02 → can_scale_up
+├── 01_scale_down.sh          # scale all zones to 0 replicas
+├── 02_fix_db.sh              # drop + reset DB (or restore from backup)
+└── can_scale_up.sh           # FFO-aware sequential zone scale-up + summary
+```
+
+#### Step 1 — Remove account from FFO (trigger Kea 2.2 chart rollback)
+
+Remove the account ID from the `FeatureFlagOverride` so that the
+`endpoint-config-manager` reconciles both HelmReleases back to the Kea 2.2
+chart version.
+
+```bash
+kubectl edit featureflagoverride -n "$FFO_NS" "$FFO_NAME"
+# Remove the account_id from spec.accounts
+```
+
+> The FFO change propagates through `app-definition-controller` →
+> `endpoint-config-manager` → updates both `HelmRelease` CRs. This takes
+> 1-3 minutes per zone. Do **not** wait for pods — the DB schema mismatch
+> will keep them unhealthy.
+
+Alternatively, create a `deployment-configurations` PR that pins the
+Kea 2.2 chart version directly (e.g. PR #125450 on branch `rollback-to-kea-2.2`).
+
+#### Step 2 — Scale down all zones
+
+Scale every deployment for the endpoint to 0 replicas so no Kea process is
+running while the DB is modified.
+
+```bash
+cd Automation/NIOS-XaaS/Rollback
+./01_scale_down.sh "$ENDPOINT_ID"
+```
+
+**What the script does:**
+1. Discovers all deployments matching `dhcp-${ENDPOINT_ID}-*` in `ddiaas-dhcp-endpoint`.
+2. Scales each deployment to 0 replicas.
+3. Waits for all pods to terminate (`kubectl rollout status`).
+4. Reports remaining pods (if any are still terminating).
+
+**Verify:**
+```bash
+kubectl get pods -n "$NS" | grep "dhcp-${ENDPOINT_ID}"
+# Expect: no pods
+kubectl get deploy -n "$NS" | grep "dhcp-${ENDPOINT_ID}"
+# Expect: 0/0 for all deployments
+```
+
+#### Step 3 — Reset the DB schema
+
+Drop all tables from the `public` schema. When Kea 2.2 starts, `dhcp-host`
+runs `kea-admin db-init` which creates the v13 DDL from scratch. Lease data
+is then synced from cloud.
+
+```bash
+./02_fix_db.sh "$ENDPOINT_ID" reset
+```
+
+**What the script does:**
+1. **Pre-flight:** confirms all deployments are at 0 replicas, CNPG secret exists,
+   CNPG primary pod is reachable.
+2. Creates a Kubernetes Job (`schema-rollback-${ENDPOINT_ID}`) using the CNPG
+   postgres image.
+3. The Job runs `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;` —
+   leaving the DB completely empty.
+4. Reports success and reminds that Kea 2.2 will initialise the schema on startup.
+
+> **Alternative — restore mode:** `./02_fix_db.sh "$ENDPOINT_ID" restore` uses the
+> `ddi.dhcp.host.server` image to run `kea-admin db-init` inside the Job, then
+> copies data from `backup_premigration` schema (if it exists from a previous
+> 2.2 → 2.6 upgrade). Use this if you need to preserve pre-upgrade lease state.
+
+**Verify:**
+```bash
+# Exec into CNPG primary and check
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -c \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
+# Expect: 0 tables (empty public schema)
+```
+
+#### Step 4 — Sequential zone scale-up with FFO checks
+
+Scale zones back up one at a time, starting with the **last zone** (highest
+letter, e.g. `1b` before `1a`). This is important because:
+
+- The rolling update processes zones in reverse order (last zone first).
+- The zone that was already updated to Kea 2.2 chart should come up first.
+- Its `dhcp-host` container runs `kea-admin db-init` → creates schema v13.
+- The second zone then starts against an already-initialised v13 DB.
+
+```bash
+./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager "<kea-2.2-chart-version>"
+```
+
+Example:
+```bash
+./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager v0.1.0-13-g2c6382a-j159-main
+```
+
+**What the script does for each zone (sequentially):**
+
+1. **FFO check** — polls the zone's `HelmRelease` until:
+   - `spec.chart.spec.version` matches the expected Kea 2.2 chart version.
+   - `status.conditions[Ready]` is `True` (reconciliation complete).
+   - Retries every 15-30s until both conditions are met.
+
+2. **Kea 2.6 safety guard** — inspects:
+   - The HelmRelease chart version for any `kea-2.6` / `upgrade-to-kea` substring.
+   - The deployment's pod template container images for any `kea.*2.6` match.
+   - **Aborts** if either check detects Kea 2.6.
+
+3. **Scale up** — `kubectl scale deployment ... --replicas=1`
+
+4. **Wait for pod healthy** — polls until the pod shows `9/9 Running`.
+
+5. **Summary** (after all zones are up):
+   - DB schema version (queries `schema_version` table on CNPG primary).
+   - All container image versions per zone (all 9 containers).
+   - Recent errors from `dhcp-kea4` and `dhcp-host` logs (filtered:
+     excludes interface/dhcp6 noise).
+
+#### Step 5 — Verify
+
+```bash
+# Quick health check
+kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID"
+# Expect: 2 pods, both 9/9 Running
+
+# DB schema
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT version || '.' || minor FROM schema_version ORDER BY version DESC, minor DESC LIMIT 1"
+# Expect: 13.0
+
+# HelmRelease chart versions
+kubectl get helmrelease -n ddiaas-endpoint-manager | grep "dhcp-${ENDPOINT_ID}"
+# Expect: both at the Kea 2.2 chart version, Ready=True
+
+# Full diagnostic
+./debug_endpoint.sh "$ENDPOINT_ID"
+```
+
+#### One-liner (automated)
+
+To run all steps (2-4) in sequence:
+
+```bash
+cd Automation/NIOS-XaaS/Rollback
+./start_rollback.sh
+```
+
+`start_rollback.sh` calls `01_scale_down.sh` → `02_fix_db.sh reset` →
+`can_scale_up.sh` for each endpoint ID configured in the script.
+
+> **Note:** The scripts require **bash ≥ 4** (uses `mapfile` and associative
+> arrays). On macOS, the system bash is v3.2 — use `/opt/homebrew/bin/bash`
+> (install via `brew install bash`). The scripts' shebangs are already set
+> to `/opt/homebrew/bin/bash`.
+
+#### Expected timeline
+
+| Phase | Duration |
+|---|---|
+| FFO removal → HelmRelease reconciliation | 1-3 min |
+| Scale down + pod termination | 1-2 min |
+| DB reset Job | ~10 sec |
+| First zone scale-up + healthy | 2-4 min |
+| FFO propagation to second zone | 1-3 min |
+| Second zone scale-up + healthy | 2-4 min |
+| **Total** | **~8-15 min** |
+
+#### Rollback of the rollback
+
+If you need to go back to Kea 2.6 after this procedure:
+1. Re-add the account to the FFO (§2.2 step 1).
+2. The `endpoint-config-manager` will reconcile both HelmReleases to the
+   Kea 2.6 chart. The `dhcp-host` container's `kea-admin db-upgrade` will
+   migrate the schema from v13 → v22.
+3. Verify with `./debug_endpoint.sh "$ENDPOINT_ID"`.
 
 ---
 
-### 2.4 Delete an endpoint
+### 2.4 Rollback Kea 2.6 → 2.2 (DB-backup restore approach)
+
+> **When to use:** Same stalled-rollback scenario as §2.3, but you want to
+> preserve pre-upgrade lease data from the `backup_premigration` schema
+> (created automatically during the 2.2 → 2.6 upgrade).
+
+Follow §2.3 steps 1-2, then use **restore** mode instead of reset:
+
+```bash
+./02_fix_db.sh "$ENDPOINT_ID" restore
+```
+
+This uses the `ddi.dhcp.host.server` image to:
+1. Drop the `public` schema.
+2. Run `kea-admin db-init` → creates v13 DDL.
+3. Copy data from `backup_premigration.*_bak` tables into `public.*`.
+
+Then continue with §2.3 steps 4-5.
+
+> The `backup_premigration` schema only exists if the endpoint previously
+> went through a successful 2.2 → 2.6 upgrade. If it doesn't exist, the
+> restore Job fails — fall back to the reset approach (§2.3).
+
+---
+
+### 2.5 Delete an endpoint
 
 ```bash
 # Via CSP API (preferred — also tears down IPsec + IP space if --cascade)
@@ -375,3 +590,7 @@ kubectl get pvc -n "$NS" -l "cnpg.io/cluster=$CLUSTER" \
 | [Automation/NIOS-XaaS/create_endpoint.py](Automation/NIOS-XaaS/create_endpoint.py) | 12-step endpoint provisioning + upgrade test |
 | [Automation/NIOS-XaaS/debug_endpoint.sh](Automation/NIOS-XaaS/debug_endpoint.sh) | 12-section diagnostic for an endpoint |
 | [Automation/NIOS-XaaS/recover_cnpg_pending.sh](Automation/NIOS-XaaS/recover_cnpg_pending.sh) | Recover stuck CNPG Pending pod (PVC/topology deadlock) |
+| [Automation/NIOS-XaaS/Rollback/start_rollback.sh](Automation/NIOS-XaaS/Rollback/start_rollback.sh) | Orchestrates full Kea 2.6 → 2.2 rollback (scale down → DB reset → scale up) |
+| [Automation/NIOS-XaaS/Rollback/01_scale_down.sh](Automation/NIOS-XaaS/Rollback/01_scale_down.sh) | Scale all DHCP deployments for an endpoint to 0 replicas |
+| [Automation/NIOS-XaaS/Rollback/02_fix_db.sh](Automation/NIOS-XaaS/Rollback/02_fix_db.sh) | Reset or restore DB schema (v22 → empty / v13) |
+| [Automation/NIOS-XaaS/Rollback/can_scale_up.sh](Automation/NIOS-XaaS/Rollback/can_scale_up.sh) | FFO-aware sequential zone scale-up with safety checks + summary |

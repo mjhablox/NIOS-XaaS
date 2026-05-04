@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/opt/homebrew/bin/bash
 set -euo pipefail
 
 # Step 2: Apply a Kubernetes Job to rollback DB schema
@@ -101,24 +101,6 @@ fi
 header "2. Creating rollback Job"
 # ─────────────────────────────────────────────
 
-cat <<EOF | kubectl apply -n "$DHCP_NS" -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${JOB_NAME}
-  namespace: ${DHCP_NS}
-  labels:
-    app: schema-rollback
-    endpointID: "${ENDPOINT_ID}"
-spec:
-  backoffLimit: 0
-  ttlSecondsAfterFinished: 3600
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: schema-rollback
-          image: ${HOST_CONTROLLER_IMAGE}
 cat <<EOF | kubectl apply -n "$DHCP_NS" -f -
 apiVersion: batch/v1
 kind: Job

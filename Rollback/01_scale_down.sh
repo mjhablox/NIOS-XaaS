@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/opt/homebrew/bin/bash
 set -euo pipefail
 
 # Step 1: Scale down Kea 2.6 deployment to 0 replicas

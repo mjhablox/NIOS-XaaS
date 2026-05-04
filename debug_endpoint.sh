@@ -37,7 +37,7 @@ MATCHING_FFOS=$(kubectl get featureflagoverrides.terminus.infoblox.com -n "$APP_
       .spec.labelSelector.matchExpressions[]? |
       (.key == "endpoint_id" or .key == "endpointId") and (.values | index($eid))
     ) |
-    "\(.metadata.name) → version=\(.spec.value // "?") priority=\(.spec.priority // "?") feature=\(.spec.featureName // "?")" 
+    "\(.metadata.name) → version=\(.spec.value // "?") priority=\(.spec.priority // "?") feature=\(.spec.featureName // "?")"
   ' 2>/dev/null || true)
 
 if [[ -n "$MATCHING_FFOS" ]]; then
@@ -270,7 +270,7 @@ if [[ -n "$PODS" ]]; then
     # Skip cnpg pods
     if [[ "$POD" == cnpg-* ]]; then continue; fi
     POD_AZ=$(kubectl get pod "$POD" -n "$DHCP_NS" -o json 2>/dev/null | \
-      jq -r '.spec.nodeName as $node | .metadata.labels["topology.kubernetes.io/zone"] // 
+      jq -r '.spec.nodeName as $node | .metadata.labels["topology.kubernetes.io/zone"] //
         (if $node then "node:" + $node else "unknown-az" end)' 2>/dev/null || echo "unknown-az")
     # Fallback: get AZ from node labels
     if [[ "$POD_AZ" == "null" || -z "$POD_AZ" ]]; then
@@ -293,6 +293,265 @@ if [[ -n "$PODS" ]]; then
 else
   fail "No pods found matching '$ENDPOINT_ID' in $DHCP_NS"
   info "  → HelmRelease may have failed before creating pods. Check section 4."
+fi
+
+# ─────────────────────────────────────────────
+header "5b. Kea DHCP4 Config (kea-dhcp4.conf)"
+# ─────────────────────────────────────────────
+# Dump the live Kea DHCPv4 configuration from each Kea container.
+# Tries common config paths and pretty-prints with jq when available.
+KEA_CONF_PATHS=(
+  "/home/keadist/v4.5/etc/kea/kea-dhcp4.conf"
+  "/home/keadist/v4.3/etc/kea/kea-dhcp4.conf"
+  "/home/keadist/v4.5/kea-dhcp4.conf"
+  "/home/keadist/v4.3/kea-dhcp4.conf"
+  "/etc/kea/kea-dhcp4.conf"
+  "/config/kea-dhcp4.conf"
+  "/var/kea/kea-dhcp4.conf"
+  "/opt/kea/etc/kea/kea-dhcp4.conf"
+)
+
+if [[ -n "${PODS:-}" ]]; then
+  while IFS= read -r line; do
+    POD=$(echo "$line" | awk '{print $1}')
+    READY=$(echo "$line" | awk '{print $2}')
+    STATUS=$(echo "$line" | awk '{print $3}')
+
+    # Skip cnpg/postgres pods
+    if [[ "$POD" == cnpg-* ]]; then continue; fi
+
+    # Skip pods where not all containers are ready (e.g. 0/9, 8/9, etc.)
+    READY_CURRENT=$(echo "$READY" | cut -d/ -f1)
+    READY_TOTAL=$(echo "$READY" | cut -d/ -f2)
+    if [[ "$STATUS" != "Running" || "$READY_CURRENT" != "$READY_TOTAL" ]]; then
+      warn "$POD: skipping kea-dhcp4.conf dump ($READY $STATUS — exec would fail)"
+      continue
+    fi
+
+    # Find Kea container(s) in this pod (name contains "kea" and not "exporter"/"hook")
+    KEA_CONTAINERS=$(kubectl get pod "$POD" -n "$DHCP_NS" -o json 2>/dev/null | \
+      jq -r '.spec.containers[] | select(.name | test("kea"; "i")) | .name' 2>/dev/null || true)
+
+    if [[ -z "$KEA_CONTAINERS" ]]; then
+      warn "$POD: no Kea container found"
+      continue
+    fi
+
+    for CTR in $KEA_CONTAINERS; do
+      info "${BOLD}cmd:${NC} kubectl exec -n $DHCP_NS $POD -c $CTR -- cat <kea-dhcp4.conf>"
+      FOUND_CONF=""
+      for PATH_TRY in "${KEA_CONF_PATHS[@]}"; do
+        # -q to silence test errors; check existence first
+        if kubectl exec -n "$DHCP_NS" "$POD" -c "$CTR" -- test -f "$PATH_TRY" 2>/dev/null; then
+          FOUND_CONF="$PATH_TRY"
+          break
+        fi
+      done
+
+      # Fallback: search for any kea-dhcp4.conf on the container filesystem
+      if [[ -z "$FOUND_CONF" ]]; then
+        FOUND_CONF=$(kubectl exec -n "$DHCP_NS" "$POD" -c "$CTR" -- \
+          sh -c 'find / -name kea-dhcp4.conf -type f 2>/dev/null | head -1' 2>/dev/null || true)
+      fi
+
+      if [[ -z "$FOUND_CONF" ]]; then
+        fail "$POD/$CTR: kea-dhcp4.conf not found in any of: ${KEA_CONF_PATHS[*]}"
+        continue
+      fi
+
+      ok "$POD/$CTR: $FOUND_CONF"
+      CONF_CONTENT=$(kubectl exec -n "$DHCP_NS" "$POD" -c "$CTR" -- cat "$FOUND_CONF" 2>/dev/null || true)
+      if [[ -z "$CONF_CONTENT" ]]; then
+        warn "  (file is empty or unreadable)"
+        continue
+      fi
+
+      # Pretty-print as JSON if possible (Kea config is JSON with comments).
+      # jq doesn't handle // comments — strip them first with sed for the pretty path,
+      # but always show the raw file so comments/structure are preserved on error.
+      if command -v jq >/dev/null 2>&1; then
+        PRETTY=$(echo "$CONF_CONTENT" | sed -E 's://.*$::' | jq '.' 2>/dev/null || true)
+        if [[ -n "$PRETTY" ]]; then
+          echo "$PRETTY"
+        else
+          echo "$CONF_CONTENT"
+        fi
+      else
+        echo "$CONF_CONTENT"
+      fi
+      echo ""
+    done
+  done <<< "$PODS"
+else
+  warn "No pods available; skipping kea-dhcp4.conf dump"
+fi
+
+# ─────────────────────────────────────────────
+header "5c. DB Schema Migration Status (dhcp-host logs)"
+# ─────────────────────────────────────────────
+# Inspect the dhcp-host container logs to determine whether the Kea DB schema
+# migration has completed. Looks for common migration markers (kea-admin
+# upgrade output, schema version logs, completion messages, errors).
+if [[ -n "${PODS:-}" ]]; then
+  while IFS= read -r line; do
+    POD=$(echo "$line" | awk '{print $1}')
+    if [[ "$POD" == cnpg-* ]]; then continue; fi
+
+    # Find a dhcp-host container in this pod (exact name or prefix match)
+    DHCP_HOST_CTR=$(kubectl get pod "$POD" -n "$DHCP_NS" -o json 2>/dev/null | \
+      jq -r '[.spec.containers[], .spec.initContainers[]?] |
+             .[] | select(.name | test("dhcp-host"; "i")) | .name' 2>/dev/null | head -1)
+
+    if [[ -z "$DHCP_HOST_CTR" ]]; then
+      continue
+    fi
+
+    info "${BOLD}cmd:${NC} kubectl logs -n $DHCP_NS $POD -c $DHCP_HOST_CTR --tail=2000"
+    LOGS=$(kubectl logs -n "$DHCP_NS" "$POD" -c "$DHCP_HOST_CTR" --tail=2000 2>/dev/null || true)
+    # Also try the previous instance if the container has restarted
+    PREV_LOGS=$(kubectl logs -n "$DHCP_NS" "$POD" -c "$DHCP_HOST_CTR" --tail=2000 -p 2>/dev/null || true)
+    ALL_LOGS="${LOGS}
+${PREV_LOGS}"
+
+    if [[ -z "$LOGS" && -z "$PREV_LOGS" ]]; then
+      warn "$POD/$DHCP_HOST_CTR: no logs available"
+      continue
+    fi
+
+    # Patterns that indicate migration progress / completion / failure
+    MIG_LINES=$(echo "$ALL_LOGS" | grep -iE \
+      'schema|migrat|kea-admin|upgrade|version.*db|db.*version|alembic|goose|liquibase|flyway|create table|alter table' \
+      2>/dev/null | tail -40 || true)
+
+    SUCCESS=$(echo "$ALL_LOGS" | grep -iE \
+      'schema (upgrade|migration).*(complete|success|done|finished)|migration.*(complete|success|done|finished)|already (at|on) (the )?(latest|current) (schema )?version|schema is up.?to.?date|no migration needed|database schema is current|kea-admin.*success' \
+      2>/dev/null | tail -5 || true)
+
+    FAILURE=$(echo "$ALL_LOGS" | grep -iE \
+      'schema.*(fail|error|mismatch)|migration.*(fail|error|aborted)|kea-admin.*(fail|error)|incompatible schema|schema version.*(mismatch|too (old|new))|cannot (upgrade|migrate)' \
+      2>/dev/null | tail -5 || true)
+
+    IN_PROGRESS=$(echo "$ALL_LOGS" | grep -iE \
+      '(starting|running|applying|performing) .*(migration|schema upgrade|kea-admin)|upgrading schema|migrating .*from .*to' \
+      2>/dev/null | tail -5 || true)
+
+    echo ""
+    info "${BOLD}$POD/$DHCP_HOST_CTR${NC}"
+
+    if [[ -n "$FAILURE" ]]; then
+      fail "DB schema migration FAILED / has errors:"
+      echo "$FAILURE" | sed 's/^/    /'
+    elif [[ -n "$SUCCESS" ]]; then
+      ok "DB schema migration COMPLETE:"
+      echo "$SUCCESS" | sed 's/^/    /'
+    elif [[ -n "$IN_PROGRESS" ]]; then
+      warn "DB schema migration IN PROGRESS (no completion marker yet):"
+      echo "$IN_PROGRESS" | sed 's/^/    /'
+    elif [[ -n "$MIG_LINES" ]]; then
+      warn "Inconclusive — schema/migration mentions found but no clear status:"
+      echo "$MIG_LINES" | tail -10 | sed 's/^/    /'
+    else
+      warn "No schema/migration related log lines found in last 2000 lines"
+    fi
+  done <<< "$PODS"
+else
+  warn "No pods available; skipping DB schema migration check"
+fi
+
+# ─────────────────────────────────────────────
+header "5d. CNPG Cluster — Primary & Pending Pod Diagnosis"
+# ─────────────────────────────────────────────
+# Show CNPG primary, ready instances, and detailed scheduling diagnosis
+# (PVC zone affinity + last FailedScheduling event) for any Pending CNPG pod.
+CNPG_CLUSTER="cnpg-${ENDPOINT_ID}"
+info "${BOLD}cmd:${NC} kubectl get cluster.postgresql.cnpg.io $CNPG_CLUSTER -n $DHCP_NS -o json"
+
+CNPG_JSON=$(kubectl get cluster.postgresql.cnpg.io "$CNPG_CLUSTER" -n "$DHCP_NS" -o json 2>/dev/null || true)
+if [[ -z "$CNPG_JSON" ]]; then
+  warn "CNPG cluster '$CNPG_CLUSTER' not found in $DHCP_NS"
+else
+  CNPG_PHASE=$(echo "$CNPG_JSON" | jq -r '.status.phase // "unknown"')
+  CNPG_PRIMARY=$(echo "$CNPG_JSON" | jq -r '.status.currentPrimary // .status.targetPrimary // "unknown"')
+  CNPG_TARGET=$(echo "$CNPG_JSON" | jq -r '.status.targetPrimary // "unknown"')
+  CNPG_READY=$(echo "$CNPG_JSON" | jq -r '.status.readyInstances // 0')
+  CNPG_INST=$(echo "$CNPG_JSON" | jq -r '.spec.instances // 0')
+
+  info "  Phase:           $CNPG_PHASE"
+  info "  Current primary: $CNPG_PRIMARY"
+  if [[ "$CNPG_TARGET" != "$CNPG_PRIMARY" && "$CNPG_TARGET" != "unknown" ]]; then
+    warn "  Target primary:  $CNPG_TARGET (failover/switchover in progress)"
+  fi
+  if [[ "$CNPG_READY" == "$CNPG_INST" ]]; then
+    ok "  Ready instances: $CNPG_READY/$CNPG_INST"
+  else
+    fail "  Ready instances: $CNPG_READY/$CNPG_INST"
+  fi
+fi
+
+# List all CNPG pods for this cluster
+CNPG_PODS=$(kubectl get pods -n "$DHCP_NS" -l "cnpg.io/cluster=$CNPG_CLUSTER" \
+  -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[*].ready,STATUS:.status.phase,NODE:.spec.nodeName \
+  --no-headers 2>/dev/null || true)
+
+if [[ -z "$CNPG_PODS" ]]; then
+  warn "No CNPG pods found with label cnpg.io/cluster=$CNPG_CLUSTER"
+else
+  echo ""
+  info "${BOLD}CNPG pods:${NC}"
+  echo "$CNPG_PODS" | sed 's/^/  /'
+
+  # Diagnose every Pending CNPG pod
+  while IFS= read -r row; do
+    POD=$(echo "$row" | awk '{print $1}')
+    STATUS=$(echo "$row" | awk '{print $3}')
+    [[ "$STATUS" != "Pending" ]] && continue
+
+    echo ""
+    fail "$POD is Pending — diagnosing"
+
+    # PVC bound to this CNPG instance is conventionally named the same as the pod
+    PVC_NAME="$POD"
+    PVC_JSON=$(kubectl get pvc -n "$DHCP_NS" "$PVC_NAME" -o json 2>/dev/null || true)
+    if [[ -n "$PVC_JSON" ]]; then
+      PV_NAME=$(echo "$PVC_JSON" | jq -r '.spec.volumeName // empty')
+      SELECTED_NODE=$(echo "$PVC_JSON" | jq -r '.metadata.annotations["volume.kubernetes.io/selected-node"] // empty')
+      PVC_PHASE=$(echo "$PVC_JSON" | jq -r '.status.phase // "unknown"')
+      info "  PVC:             $PVC_NAME (phase=$PVC_PHASE)"
+      [[ -n "$SELECTED_NODE" ]] && info "  Selected node:   $SELECTED_NODE"
+
+      if [[ -n "$PV_NAME" ]]; then
+        PV_ZONES=$(kubectl get pv "$PV_NAME" -o json 2>/dev/null | \
+          jq -r '[.spec.nodeAffinity.required.nodeSelectorTerms[]?.matchExpressions[]? |
+                  select(.key == "topology.kubernetes.io/zone") | .values[]?] | join(",")' 2>/dev/null || true)
+        if [[ -n "$PV_ZONES" ]]; then
+          fail "  PV $PV_NAME is locked to AZ: $PV_ZONES"
+          info "  → Pod can ONLY schedule on a node in [$PV_ZONES]."
+        else
+          info "  PV $PV_NAME has no zone affinity"
+        fi
+      fi
+    else
+      warn "  No PVC found named '$PVC_NAME' for this pod"
+    fi
+
+    # Last FailedScheduling event message (truncated)
+    SCHED_MSG=$(kubectl get events -n "$DHCP_NS" \
+      --field-selector "involvedObject.name=$POD,reason=FailedScheduling" \
+      --sort-by='.lastTimestamp' -o json 2>/dev/null | \
+      jq -r '.items[-1].message // empty' 2>/dev/null || true)
+    if [[ -n "$SCHED_MSG" ]]; then
+      info "  Last FailedScheduling:"
+      # Wrap long message and indent
+      echo "$SCHED_MSG" | fold -s -w 120 | sed 's/^/    /'
+    fi
+
+    # Quick capacity hint: count Ready nodes in the PV's AZ
+    if [[ -n "${PV_ZONES:-}" ]]; then
+      ZONE_NODES=$(kubectl get nodes -l "topology.kubernetes.io/zone=$PV_ZONES" \
+        -o json 2>/dev/null | jq -r '.items | length' 2>/dev/null || echo "?")
+      info "  Nodes in $PV_ZONES (any role): $ZONE_NODES"
+    fi
+  done <<< "$CNPG_PODS"
 fi
 
 # ─────────────────────────────────────────────

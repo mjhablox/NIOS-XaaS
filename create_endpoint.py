@@ -46,7 +46,6 @@ SERVICE_REGION = os.environ.get("SERVICE_REGION", "AWS US (N. Virginia)")
 # SSH / Router config for IPsec tunnel
 ROUTER_HOST = os.environ.get("ROUTER_HOST", "172.28.7.174")
 ROUTER_USER = os.environ.get("ROUTER_USER", "ubuntu")
-ROUTER_PEM = os.environ.get("ROUTER_PEM", "/Users/n.joshi/keys/ib-shared.pem")
 ROUTER_PEM = os.environ.get("ROUTER_PEM", "/Users/mjha2/ib-shared.pem")
 
 # FeatureFlagOverride config for upgrade
@@ -947,6 +946,10 @@ def main():
                 break
             results.append((step_name, "PASSED"))
             logger.info("PASSED: {}".format(step_name))
+            if endpoint_id and step_name == "Create Universal Service + Infrastructure":
+                logger.info("*" * 60)
+                logger.info("  ENDPOINT ID: {}".format(endpoint_id))
+                logger.info("*" * 60)
     finally:
         if args.no_cleanup:
             logger.info("Skipping cleanup (--no-cleanup)")
