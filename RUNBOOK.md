@@ -6,7 +6,7 @@ CloudNativePG (CNPG) Postgres backend on AWS EKS.
 **Audience:** On-call engineers, SREs, and developers debugging customer endpoint
 issues on `stage` / `prod`.
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-06
 
 ---
 
@@ -143,7 +143,12 @@ or via CSP UI: delete IPsec tunnel → range → subnet → IP space → endpoin
 | Identify which zones have Kea 2.2 vs 2.6 | `kubectl get pods -n $NS -l ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID -o wide` |
 | Confirm CNPG cluster healthy (3/3) | `kubectl get cluster.postgresql.cnpg.io -n $NS $CLUSTER` |
 | Note current DB schema version | See step 2 below |
-| Know the target Kea 2.2 chart version | e.g. `v0.1.0-13-g2c6382a-j159-main` |
+| Know the target Kea 2.2 chart version | `v0.1.0-13-g2c6382a-j159-main` |
+| DC PR merged (rollback FFO) | Create a `deployment-configurations` PR that pins the per-endpoint FFO `ddiaasDhcpBase.chart.version` to `v0.1.0-13-g2c6382a-j159-main`. Must be merged **before** running `can_scale_up.sh`. |
+
+> **Important:** The `ddiaasDhcpBase.chart.version` for Kea 2.2 rollback is
+> **`v0.1.0-13-g2c6382a-j159-main`** across all rollback methods (`reset`,
+> `restore`, and `newdb`). This is the hotfix-9 chart with rsyslog redirection.
 
 **Orchestration scripts:**
 ```
@@ -154,24 +159,35 @@ Automation/NIOS-XaaS/Rollback/
 └── can_scale_up.sh           # FFO-aware sequential zone scale-up + summary
 ```
 
-#### Step 1 — Remove account from FFO (trigger Kea 2.2 chart rollback)
+#### Step 1 — Create the rollback FFO (deployment-configurations PR)
 
-Remove the account ID from the `FeatureFlagOverride` so that the
-`endpoint-config-manager` reconciles both HelmReleases back to the Kea 2.2
-chart version.
+Add a per-endpoint `versionOverride` with **priority 510** (higher than the
+Kea 2.6 FFO at 305/310) in:
 
-```bash
-kubectl edit featureflagoverride -n "$FFO_NS" "$FFO_NAME"
-# Remove the account_id from spec.accounts
+```
+deployment-configurations/envs/<env>/<cluster>/ddiaas-feature-flag-override-dhcp-values.yaml
 ```
 
-> The FFO change propagates through `app-definition-controller` →
-> `endpoint-config-manager` → updates both `HelmRelease` CRs. This takes
-> 1-3 minutes per zone. Do **not** wait for pods — the DB schema mismatch
-> will keep them unhealthy.
+```yaml
+  - name: adc-ddiaas-dhcp-rollback-kea-2.6-to-2.2
+    namespace: "atlas-app-def-system"
+    labels:
+      matchExpressions:
+        endpoint_id:
+          - "<ENDPOINT_ID>"
+    app:
+      name: "ddiaas-dhcp"
+      version: "0.26.2-hf-9-0"
+      priority: 510
+```
 
-Alternatively, create a `deployment-configurations` PR that pins the
-Kea 2.2 chart version directly (e.g. PR #125450 on branch `rollback-to-kea-2.2`).
+This pins `ddiaasDhcpBase.chart.version` to `v0.1.0-13-g2c6382a-j159-main`.
+
+Create a PR, get approval, and **merge**.
+
+> **Important:** The DC PR must be merged **before** running `can_scale_up.sh`.
+> The script polls the HelmRelease chart version — if the FFO hasn't propagated,
+> it will wait indefinitely.
 
 #### Step 2 — Scale down all zones
 
@@ -232,6 +248,12 @@ kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
 
 #### Step 4 — Sequential zone scale-up with FFO checks
 
+> **Prerequisite:** The `deployment-configurations` PR that creates the
+> per-endpoint rollback FFO (pinning `ddiaasDhcpBase.chart.version` to
+> `v0.1.0-13-g2c6382a-j159-main`) must be **merged** before running
+> `can_scale_up.sh`. The script polls for HelmRelease chart version match —
+> if the FFO hasn't propagated, it will wait indefinitely.
+
 Scale zones back up one at a time, starting with the **last zone** (highest
 letter, e.g. `1b` before `1a`). This is important because:
 
@@ -240,11 +262,6 @@ letter, e.g. `1b` before `1a`). This is important because:
 - Its `dhcp-host` container runs `kea-admin db-init` → creates schema v13.
 - The second zone then starts against an already-initialised v13 DB.
 
-```bash
-./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager "<kea-2.2-chart-version>"
-```
-
-Example:
 ```bash
 ./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager v0.1.0-13-g2c6382a-j159-main
 ```
@@ -321,43 +338,357 @@ cd Automation/NIOS-XaaS/Rollback
 | Second zone scale-up + healthy | 2-4 min |
 | **Total** | **~8-15 min** |
 
-#### Rollback of the rollback
+---
 
-If you need to go back to Kea 2.6 after this procedure:
-1. Re-add the account to the FFO (§2.2 step 1).
-2. The `endpoint-config-manager` will reconcile both HelmReleases to the
+### 2.4 Rollback Kea 2.6 → 2.2 (FFO + fresh CNPG DB — `newdb` approach)
+
+> **When to use:** You need to roll back a **specific endpoint** from Kea 2.6
+> to Kea 2.2 and:
+> - The existing CNPG cluster has issues (corrupted, stuck, or PVC zone deadlock).
+> - You don't need to preserve lease data (leases will re-sync from cloud).
+> - The `backup_premigration` schema does not exist or is corrupted.
+>
+> This approach **deletes and recreates** the entire CNPG cluster from scratch,
+> ensuring a clean Postgres instance. Kea 2.2's `dhcp-host` then initialises
+> schema v13 on first startup.
+>
+> **Validated on:** 2026-05-06, endpoint `6yp5a7ff5p4evrowbgqpukbjrwf2xov5`
+> in `ddi-qa-use1`.
+
+**Pre-flight**
+
+| Check | Command |
+|---|---|
+| Endpoint has Kea 2.6 running | `./debug_endpoint.sh "$ENDPOINT_ID"` — confirm kea image has `kea-2.6` or schema v22 |
+| Know the target Kea 2.2 chart version | `v0.1.0-13-g2c6382a-j159-main` |
+
+#### Step 1 — Create the rollback FFO (deployment-configurations PR)
+
+Same as §2.5 Step 1 — add a per-endpoint `versionOverride` with **priority 510**
+in:
+
+```
+deployment-configurations/envs/<env>/<cluster>/ddiaas-feature-flag-override-dhcp-values.yaml
+```
+
+```yaml
+  - name: adc-ddiaas-dhcp-rollback-kea-2.6-to-2.2
+    namespace: "atlas-app-def-system"
+    labels:
+      matchExpressions:
+        endpoint_id:
+          - "<ENDPOINT_ID>"
+    app:
+      name: "ddiaas-dhcp"
+      version: "0.26.2-hf-9-0"
+      priority: 510
+```
+
+This pins `ddiaasDhcpBase.chart.version` to `v0.1.0-13-g2c6382a-j159-main`.
+
+Create a PR, get approval, and **merge**. Example: PR #126294.
+
+> **Important:** The DC PR must be merged **before** running `can_scale_up.sh`.
+> The script polls the HelmRelease chart version — if the FFO hasn't propagated,
+> it will wait indefinitely.
+
+#### Step 2 — Scale down all zones
+
+```bash
+cd Automation/NIOS-XaaS/Rollback
+./01_scale_down.sh "$ENDPOINT_ID"
+```
+
+**Verify:**
+```bash
+kubectl get pods -n "$NS" | grep "dhcp-${ENDPOINT_ID}"
+# Expect: no pods
+```
+
+#### Step 3 — Delete and recreate the CNPG cluster (newdb)
+
+```bash
+./02_fix_db.sh "$ENDPOINT_ID" newdb
+```
+
+**What the script does:**
+1. Confirms all deployments are at 0 replicas.
+2. Deletes the existing CNPG cluster (`kubectl delete cluster.postgresql.cnpg.io`).
+3. Waits for all CNPG pods and PVCs to be fully cleaned up.
+4. Recreates the CNPG cluster from the stored manifest (3 instances, PostgreSQL 17.5).
+5. Waits for the new cluster to reach `Cluster in healthy state` with all
+   instances ready (3/3).
+6. Verifies the new CNPG secret and RW service are available.
+
+The new DB is completely empty — no schemas, no tables. Kea 2.2's `dhcp-host`
+will initialise schema v13 on first startup.
+
+**Verify:**
+```bash
+# CNPG cluster healthy
+kubectl get cluster.postgresql.cnpg.io -n "$NS" "$CLUSTER"
+# Expect: phase=Cluster in healthy state, 3/3 instances
+
+# Pods running
+kubectl get pods -n "$NS" -l "cnpg.io/cluster=$CLUSTER"
+# Expect: 3 pods, all 1/1 Running
+
+# DB is empty
+kubectl exec -n "$NS" "${CLUSTER}-1" -- \
+  psql -U postgres -d dhcp_endpoint -c \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
+# Expect: 0
+```
+
+#### Step 4 — Sequential zone scale-up with FFO checks
+
+> **Prerequisite:** The DC PR (from Step 1) must be **merged** and the FFO
+> propagated before running this step.
+
+```bash
+./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager v0.1.0-13-g2c6382a-j159-main
+```
+
+The script:
+1. Discovers zones from HelmReleases (sorted descending: last zone first).
+2. **For each zone** (sequentially):
+   - Waits for HelmRelease chart version to match `v0.1.0-13-g2c6382a-j159-main`.
+   - Verifies no Kea 2.6 images in deployment spec.
+   - Scales to 1 replica.
+   - Waits for pod 9/9 Running.
+3. Prints summary: DB schema, all container images, recent errors.
+
+> **Note:** The first zone's `dhcp-host` container runs `kea-admin db-init` to
+> create the v13 schema in the fresh DB. The second zone finds schema already
+> initialised.
+
+#### Step 5 — Verify
+
+```bash
+# Quick checks
+kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID"
+# Expect: 2 pods, both 9/9 Running
+
+# DB schema
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT version || '.' || minor FROM schema_version ORDER BY version DESC, minor DESC LIMIT 1"
+# Expect: 13.0
+
+# Kea image
+kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID" \
+  -o jsonpath='{range .items[*]}{.spec.containers[?(@.name=="dhcp-kea4")].image}{"\n"}{end}'
+# Expect: ci-2025-09-05T17-55Z-169-2fb6baf-feature-rsyslog-redirection (Kea 2.2)
+
+# Full diagnostic
+./debug_endpoint.sh "$ENDPOINT_ID"
+```
+
+#### Known observations
+
+| Observation | Explanation |
+|---|---|
+| `dhcp-scm-client` readiness 503 for several minutes after scale-up | SCM subscribe stream may take time to establish after a fresh pod start. Cluster-wide — all DHCP pods on `ddi-qa-use1` show 8/9 until the SCM route stabilises. Resolves on its own (1-20 min). |
+| `Restoring dhcpv4 leases is not needed because hagroups is empty` | Expected with fresh DB — no HA group configured yet. Leases will re-sync from cloud. |
+| `LS_EXCEPTION_OCCURRED exception occurred: Failed to get reply: Server closed the connection` | Startup race in `dhcp-kea4` lease-sync hook. Resolves within seconds. |
+
+#### Expected timeline
+
+| Phase | Duration |
+|---|---|
+| DC PR merge + ArgoCD sync | 2-3 min |
+| Scale down + pod termination | 1-2 min |
+| CNPG delete + recreate + healthy | 3-5 min |
+| FFO → HelmRelease propagation (zone 1) | 3-8 min |
+| First zone scale-up + 9/9 ready | 2-20 min (SCM client delay) |
+| Second zone scale-up + 9/9 ready | 1-3 min |
+| **Total** | **~12-40 min** |
+
+#### Rollback of the rollback (re-upgrade to Kea 2.6)
+
+1. Remove the per-endpoint FFO override from `deployment-configurations`.
+2. Re-add the account to the Kea 2.6 FFO (§2.2 step 1) if previously removed.
+3. The `endpoint-config-manager` will reconcile both HelmReleases to the
    Kea 2.6 chart. The `dhcp-host` container's `kea-admin db-upgrade` will
    migrate the schema from v13 → v22.
-3. Verify with `./debug_endpoint.sh "$ENDPOINT_ID"`.
+4. Verify with `./debug_endpoint.sh "$ENDPOINT_ID"`.
 
 ---
 
-### 2.4 Rollback Kea 2.6 → 2.2 (DB-backup restore approach)
+### 2.5 Rollback Kea 2.6 → 2.2 (FFO + DB-backup restore approach) — RECOMMENDED
 
-> **When to use:** Same stalled-rollback scenario as §2.3, but you want to
-> preserve pre-upgrade lease data from the `backup_premigration` schema
-> (created automatically during the 2.2 → 2.6 upgrade).
+> **When to use:** You need to roll back a **specific endpoint** from Kea 2.6
+> to Kea 2.2 while preserving lease data. This is the validated production
+> approach. Unlike §2.3, it does **not** require removing the account from the
+> Kea 2.6 FFO — instead, a higher-priority per-endpoint FFO overrides it.
+>
+> **Validated on:** 2026-05-04, endpoints `q7ts2sz3u735pwmcrqev4vdrfuvk6lpw`
+> and `tlhftd4xwdcd5crmy5kj6mfx3tcedut6` in `ddi-qa-use1`.
 
-Follow §2.3 steps 1-2, then use **restore** mode instead of reset:
+**Pre-flight**
+
+| Check | Command |
+|---|---|
+| Endpoint has Kea 2.6 running | `./debug_endpoint.sh "$ENDPOINT_ID"` — confirm kea image has `kea-2.6` or schema v22 |
+| CNPG cluster healthy | `kubectl get cluster.postgresql.cnpg.io -n $NS $CLUSTER` |
+| `backup_premigration` schema exists | `kubectl exec -n $NS $CNPG_RW_POD -- psql -U postgres -d dhcp_endpoint -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name='backup_premigration';"` |
+| Know the target Kea 2.2 chart version | `v0.1.0-13-g2c6382a-j159-main` |
+
+#### Step 1 — Create the rollback FFO (deployment-configurations PR)
+
+Add a per-endpoint `versionOverride` with **priority 510** (higher than the
+Kea 2.6 FFO at 305/310) in:
+
+```
+deployment-configurations/envs/<env>/<cluster>/ddiaas-feature-flag-override-dhcp-values.yaml
+```
+
+```yaml
+  - name: adc-ddiaas-dhcp-rollback-kea-2.6-to-2.2
+    namespace: "atlas-app-def-system"
+    labels:
+      matchExpressions:
+        endpoint_id:
+          - "<ENDPOINT_ID>"
+    app:
+      name: "ddiaas-dhcp"
+      version: "0.26.2-hf-9-0"
+      priority: 510
+```
+
+> **Why priority 510?** The Kea 2.6 account-level FFO is at priority 305-310.
+> A higher priority per-endpoint override wins, so only this endpoint rolls back
+> while other endpoints on the same account stay on Kea 2.6.
+>
+> **Why `0.26.2-hf-9-0`?** This is the Kea 2.2 app version that maps to chart
+> `v0.1.0-13-g2c6382a-j159-main` (the hotfix-9 release with rsyslog redirection).
+
+Create a PR, get approval, and **merge**. Example: PR #125797.
+
+#### Step 2 — Scale down all zones
+
+Wait for deployments to be at 0 (endpoint may already be scaled down if Kea
+was crashing). Otherwise:
+
+```bash
+cd Automation/NIOS-XaaS/Rollback
+./01_scale_down.sh "$ENDPOINT_ID"
+```
+
+**Verify:**
+```bash
+kubectl get pods -n "$NS" | grep "dhcp-${ENDPOINT_ID}"
+# Expect: no pods
+```
+
+#### Step 3 — Restore DB from backup_premigration
 
 ```bash
 ./02_fix_db.sh "$ENDPOINT_ID" restore
 ```
 
-This uses the `ddi.dhcp.host.server` image to:
-1. Drop the `public` schema.
-2. Run `kea-admin db-init` → creates v13 DDL.
-3. Copy data from `backup_premigration.*_bak` tables into `public.*`.
+**What the script does:**
+1. Confirms deployments are at 0, CNPG primary reachable.
+2. Connects to CNPG primary via `kubectl exec` with `session_replication_role=replica`
+   (bypasses FK constraints).
+3. Drops the `public` schema.
+4. Runs `kea-admin db-init` → creates clean Kea 2.2 schema (v13.0).
+5. Restores data from `backup_premigration` tables (`lease4_bak`, `lease6_bak`,
+   `hosts_bak`, etc.) into the corresponding `public` tables.
+6. Reports row counts.
 
-Then continue with §2.3 steps 4-5.
+**Verify:**
+```bash
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT version || '.' || minor FROM schema_version;"
+# Expect: 13.0
 
-> The `backup_premigration` schema only exists if the endpoint previously
-> went through a successful 2.2 → 2.6 upgrade. If it doesn't exist, the
-> restore Job fails — fall back to the reset approach (§2.3).
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT count(*) FROM lease4 WHERE state=0;"
+# Expect: pre-upgrade lease count (from backup)
+```
+
+> If `backup_premigration` doesn't exist, fall back to reset mode:
+> `./02_fix_db.sh "$ENDPOINT_ID" reset` — this creates an empty v13 schema.
+> Leases will be re-synced from cloud on startup.
+
+#### Step 4 — Scale up with FFO verification
+
+> **Prerequisite:** The `deployment-configurations` PR (from Step 1) must be
+> **merged** before running `can_scale_up.sh`. The script polls for HelmRelease
+> chart version match — if the FFO hasn't propagated, it will wait indefinitely.
+
+```bash
+./can_scale_up.sh "$ENDPOINT_ID" ddiaas-endpoint-manager v0.1.0-13-g2c6382a-j159-main
+```
+
+The script:
+1. Discovers zones from HelmReleases (sorted descending: 1c before 1b).
+2. **For each zone** (sequentially):
+   - Waits for HelmRelease chart version to match (FFO propagation, ~3-8 min).
+   - Verifies no Kea 2.6 images in deployment spec.
+   - Scales to 1 replica.
+   - Waits for pod 9/9 Running.
+3. Prints summary: DB schema, all container images, recent errors.
+
+> **Timing:** The FFO takes 3-8 minutes per zone to propagate after the PR is
+> merged. The script polls automatically (30s interval). Total ~8-15 min.
+
+#### Step 5 — Verify
+
+```bash
+# Quick checks
+kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID"
+# Expect: 2 pods, both 9/9 Running
+
+# DB schema
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT version || '.' || minor FROM schema_version;"
+# Expect: 13.0
+
+# Kea image
+kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID" \
+  -o jsonpath='{range .items[*]}{.spec.containers[?(@.name=="dhcp-kea4")].image}{"\n"}{end}'
+# Expect: ci-2025-09-05T17-55Z-169-2fb6baf-feature-rsyslog-redirection (Kea 2.2)
+
+# Full diagnostic
+./debug_endpoint.sh "$ENDPOINT_ID"
+
+# Send DHCP leases and confirm no errors
+# Then check:
+kubectl exec -n "$NS" "$CNPG_RW_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c \
+  "SELECT state, count(*) FROM lease4 GROUP BY state;"
+```
+
+#### Known benign errors after rollback
+
+| Error | Source | Explanation |
+|---|---|---|
+| `Failed to send leases ... to Data Out: 404 (Not Found)` | dhcp-host / dhcp-data-out | ti-proxy cloud ingress returns 404 if the cloud-side lease receiver is not deployed for this test env (`grpc-ddiaas-env-2a.test.infoblox.com`). Non-blocking — local DHCP works fine. |
+| `hagroups is empty` | dhcp-host | Cloud lease-sync HA group not configured for this endpoint. Non-blocking. |
+| `unable to forward command to the dhcp4 service: No such file or directory` | dhcp-host (startup) | Startup race: dhcp-host tries to talk to kea4 before its Unix socket is ready. Resolves within seconds. |
+| `sockets: status: failed` (interface ovs-system/svc-ep/haas-ovs down) | dhcp-host status-get | OVS/network interfaces not relevant for DHCP in the pod network. Info-level, not errors. |
+
+#### Expected timeline
+
+| Phase | Duration |
+|---|---|
+| PR merge + ArgoCD sync | 2-3 min |
+| FFO → HelmRelease propagation (zone 1) | 3-5 min |
+| Scale down (if not already at 0) | 1-2 min |
+| DB restore from backup | ~30 sec |
+| First zone scale-up + 9/9 ready | 2-4 min |
+| FFO propagation to second zone | 2-5 min |
+| Second zone scale-up + 9/9 ready | 2-4 min |
+| **Total** | **~12-20 min** |
 
 ---
 
-### 2.5 Delete an endpoint
+### 2.6 Delete an endpoint
 
 ```bash
 # Via CSP API (preferred — also tears down IPsec + IP space if --cascade)

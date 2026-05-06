@@ -459,6 +459,46 @@ else
 fi
 
 # ─────────────────────────────────────────────
+header "5c2. DB Schema Version (direct query)"
+# ─────────────────────────────────────────────
+# Query the schema_version table directly from the CNPG primary pod.
+CNPG_PRIMARY_POD="cnpg-${ENDPOINT_ID}-1"
+info "${BOLD}cmd:${NC} kubectl exec -n $DHCP_NS $CNPG_PRIMARY_POD -- psql -U postgres -d dhcp_endpoint -c 'SELECT * FROM schema_version;'"
+
+SCHEMA_VER=$(kubectl exec -n "$DHCP_NS" "$CNPG_PRIMARY_POD" -- \
+  psql -U postgres -d dhcp_endpoint -t -A -c "SELECT version || '.' || minor FROM schema_version;" 2>/dev/null || true)
+
+if [[ -n "$SCHEMA_VER" ]]; then
+  ok "Kea DB schema version: ${BOLD}${SCHEMA_VER}${NC}"
+  # Map version to Kea release
+  case "$SCHEMA_VER" in
+    13.0) info "  → Corresponds to Kea 2.2.x" ;;
+    22.1) info "  → Corresponds to Kea 2.6.x" ;;
+    *)    info "  → Unknown mapping for schema version $SCHEMA_VER" ;;
+  esac
+else
+  # Try without specifying the primary pod number (might be -2 or -3)
+  CNPG_POD=$(kubectl get pods -n "$DHCP_NS" -l "cnpg.io/cluster=cnpg-${ENDPOINT_ID},role=primary" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [[ -n "$CNPG_POD" ]]; then
+    SCHEMA_VER=$(kubectl exec -n "$DHCP_NS" "$CNPG_POD" -- \
+      psql -U postgres -d dhcp_endpoint -t -A -c "SELECT version || '.' || minor FROM schema_version;" 2>/dev/null || true)
+    if [[ -n "$SCHEMA_VER" ]]; then
+      ok "Kea DB schema version: ${BOLD}${SCHEMA_VER}${NC} (from $CNPG_POD)"
+      case "$SCHEMA_VER" in
+        13.0) info "  → Corresponds to Kea 2.2.x" ;;
+        22.1) info "  → Corresponds to Kea 2.6.x" ;;
+        *)    info "  → Unknown mapping for schema version $SCHEMA_VER" ;;
+      esac
+    else
+      fail "Could not query schema_version from CNPG pod '$CNPG_POD'"
+    fi
+  else
+    fail "Could not find CNPG primary pod for cluster 'cnpg-${ENDPOINT_ID}'"
+  fi
+fi
+
+# ─────────────────────────────────────────────
 header "5d. CNPG Cluster — Primary & Pending Pod Diagnosis"
 # ─────────────────────────────────────────────
 # Show CNPG primary, ready instances, and detailed scheduling diagnosis
