@@ -22,6 +22,10 @@ issues on `stage` / `prod`.
 | `FFO_NAME` | `adc-ddiaas-dhcp-account-override-kea-2.6` | FeatureFlagOverride for Kea 2.6 |
 | `FFO_NS` | `atlas-app-def-system` | FFO namespace |
 
+**Monitoring dashboards:**
+- [NIOS-X as a Service — Grafana folder](https://grafana.csp.infoblox.com/dashboards/f/faf33b51-0653-4612-a5f9-4a6fbe51bc9f/nios-x-as-a-service) — all NIOS-XaaS dashboards (availability, leases, endpoint health).
+- [DDIaaS Availability (Customer)](https://grafana.csp.infoblox.com/d/e674b422-7c0b-46cb-9a2f-fd5420ef2d99-1/ddiaas-availability-customer-manual?orgId=1) — per-customer lease traffic and availability.
+
 Set up your shell session:
 
 ```bash
@@ -120,15 +124,32 @@ or via CSP UI: delete IPsec tunnel → range → subnet → IP space → endpoin
    ```
    Expect: `kea-dhcp4.conf` contains `Subnet4`, dhcp-host log shows
    `schema is up-to-date`, CNPG cluster `Cluster in healthy state`.
-5. Run `dras` lease test (post-upgrade in `create_endpoint.py` Step 12, or
-   manual `dras` from the customer side).
+5. Post-upgrade verification:
+   - **DRAS lease test:** For newly created endpoints (with IPsec + DRAS
+     reachability), run the `dras` lease test (post-upgrade in
+     `create_endpoint.py` Step 12). DRAS is **not** available on NIOS-X
+     on-prem devices — skip this step for those endpoints.
+   - **DB health & logs:** `./debug_endpoint.sh "$ENDPOINT_ID"` prints the
+     CNPG cluster health, DB schema version, and any error messages from
+     all 9 containers in the DHCP pods. Review the output for warnings or
+     errors.
+   - **Customer traffic monitoring:** Use the
+     [NIOS-XaaS Grafana dashboards](https://grafana.csp.infoblox.com/dashboards/f/faf33b51-0653-4612-a5f9-4a6fbe51bc9f/nios-x-as-a-service)
+     for overall service health, and the
+     [DDIaaS Availability (Customer) dashboard](https://grafana.csp.infoblox.com/d/e674b422-7c0b-46cb-9a2f-fd5420ef2d99-1/ddiaas-availability-customer-manual?orgId=1)
+     to verify that the customer is still receiving lease updates at the
+     same rate as before the deployment. Filter by account name / ID and
+     service location. Compare `dhcp-kea4` lease statistics (e.g.
+     `statistic-get` for `pkt4-ack-sent`) before and after. Check
+     `dhcp-host` and `dhcp-kea4` logs for any new error or warning
+     messages.
 
 **Rollback (DB-backup based):** see branch
 `ddiaas.dhcp.resolver.endpoint/feature/rollback-to-kea-2.2-using-db-backup`.
 
 ---
 
-### 2.3 Rollback Kea 2.6 → 2.2 (DB-reset approach)
+### 2.3 Rollback Kea 2.6 → 2.2 (DB-reset approach) — RECOMMENDED
 
 > **When to use:** The rolling update from 2.6 → 2.2 stalled — one zone got the
 > new chart but the DB is still at schema v22. Kea 2.2 cannot start against a
@@ -321,10 +342,12 @@ cd Automation/NIOS-XaaS/Rollback
 `start_rollback.sh` calls `01_scale_down.sh` → `02_fix_db.sh reset` →
 `can_scale_up.sh` for each endpoint ID configured in the script.
 
-> **Note:** The scripts require **bash ≥ 4** (uses `mapfile` and associative
-> arrays). On macOS, the system bash is v3.2 — use `/opt/homebrew/bin/bash`
-> (install via `brew install bash`). The scripts' shebangs are already set
-> to `/opt/homebrew/bin/bash`.
+> **Note:** The scripts run on the **operator's local laptop** (not in the
+> cluster) — they use `kubectl` to interact with the remote EKS cluster.
+> They require **bash ≥ 4** (uses `mapfile` and associative arrays). On
+> macOS, the system bash is v3.2 — use `/opt/homebrew/bin/bash` (install
+> via `brew install bash`). The scripts' shebangs are already set to
+> `/opt/homebrew/bin/bash`.
 
 #### Expected timeline
 
@@ -515,7 +538,7 @@ kubectl get pods -n "$NS" -l "ddiaas.infoblox.com/endpoint-id=$ENDPOINT_ID" \
 
 ---
 
-### 2.5 Rollback Kea 2.6 → 2.2 (FFO + DB-backup restore approach) — RECOMMENDED
+### 2.5 Rollback Kea 2.6 → 2.2 (FFO + DB-backup restore approach)
 
 > **When to use:** You need to roll back a **specific endpoint** from Kea 2.6
 > to Kea 2.2 while preserving lease data. This is the validated production
@@ -730,7 +753,7 @@ kubectl delete deploy,sts,svc,cm,secret -n "$NS" \
 **Most common cause:** CNPG primary unreachable → see §3.2.
 
 **Other causes:**
-- Schema migration failed (5c reports `FAILURE`) → see §3.3.
+
 - App-def-controller didn't roll out new image → check
   `kubectl describe appdefinition` for the endpoint.
 
@@ -796,30 +819,7 @@ kubectl get cluster.postgresql.cnpg.io -n "$NS" "$CLUSTER" \
 
 ---
 
-### 3.3 DB schema migration failure
-
-**Symptoms**
-- Section 5c of `debug_endpoint.sh` reports `FAILURE`.
-- `dhcp-host` log: `kea-admin upgrade ... FAILED`, `schema mismatch`, etc.
-- `dhcp-host` container in `CrashLoopBackOff`.
-
-**Diagnosis**
-```bash
-kubectl logs -n "$NS" <pod> -c dhcp-host --tail=2000 \
-  | grep -Ei 'migration|schema|kea-admin'
-```
-
-**Recovery**
-1. Take a manual CNPG backup (see §2.3 step 1).
-2. Fix the broken migration (usually a forward-only ALTER that failed). Coordinate
-   with `ddi.dhcp.host.db` repo owners.
-3. Patch the chart with the corrected migration, redeploy the endpoint config.
-4. Re-run `./debug_endpoint.sh` and verify 5c reports `SUCCESS` /
-   `schema is up-to-date`.
-
----
-
-### 3.4 IPsec tunnel down
+### 3.3 IPsec tunnel down
 
 **Symptoms**
 - `dras` cannot reach the endpoint at all (timeout, not "no reply").
@@ -840,7 +840,7 @@ kubectl describe strongswanconfig -n "$NS" <name>
 
 ---
 
-### 3.5 Endpoint stuck in `Pending` / `Provisioning`
+### 3.4 Endpoint stuck in `Pending` / `Provisioning`
 
 **Diagnosis**
 ```bash
@@ -860,7 +860,7 @@ kubectl logs -n ddiaas-endpoint-manager deploy/endpoint-config-manager --tail=50
 
 ---
 
-### 3.6 Pod stuck `ImagePullBackOff` after Kea image update
+### 3.5 Pod stuck `ImagePullBackOff` after Kea image update
 
 ```bash
 kubectl describe pod -n "$NS" <pod> | tail -30
